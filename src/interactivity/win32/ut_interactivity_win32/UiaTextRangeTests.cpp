@@ -1663,4 +1663,74 @@ class UiaTextRangeTests
         UiaTextRange* cloneUtr2 = static_cast<UiaTextRange*>(clone2.Get());
         VERIFY_IS_TRUE(cloneUtr2->_blockRange);
     }
+
+    TEST_METHOD(Movement)
+    {
+        // Helpful variables
+        const auto bufferSize{ _pTextBuffer->GetSize() };
+        const auto origin{ bufferSize.Origin() };
+        const til::point firstChar{ bufferSize.Left() + 1, bufferSize.Top() };
+        const til::point secondChar{ bufferSize.Left() + 2, bufferSize.Top() };
+        const til::point fifthChar{ bufferSize.Left() + 5, bufferSize.Top() };
+        const til::point sixthChar{ bufferSize.Left() + 6, bufferSize.Top() };
+        const auto bufferEnd{ bufferSize.EndExclusive() };
+        const til::point documentEnd{ bufferSize.Left(), (bufferSize.Height() / 2) + 1 };
+
+        // Populate buffer
+        //   Split the line into 5 segments alternating between "X" and whitespace
+        //   _________________
+        //   |XXX   XXX   XXX|
+        //   |XXX   XXX   XXX|
+        //   |XXX   XXX   XXX|
+        //   |XXX   XXX   XXX|
+        //   |_______________|
+        {
+            short i = 0;
+            auto iter{ _pTextBuffer->GetCellDataAt(bufferSize.Origin()) };
+            const auto segment{ bufferSize.Width() / 5 };
+            while (iter.Pos() != documentEnd)
+            {
+                bool fill{ true };
+                if (i % segment == 0)
+                {
+                    fill = !fill;
+                }
+
+                if (fill)
+                {
+                    _pTextBuffer->Write({ L"X" }, iter.Pos());
+                }
+
+                ++i;
+                ++iter;
+            }
+        }
+
+        // Define tests
+        struct TestInput
+        {
+            TextUnit unit;
+            int moveAmt;
+            til::point start;
+            til::point end;
+        };
+
+        struct TestOutput
+        {
+            int moveAmt;
+            til::point start;
+            til::point end;
+        };
+
+        struct MyTest
+        {
+            std::wstring name;
+            TestInput input;
+            TestOutput output;
+        };
+
+        const std::vector<MyTest> tests{
+            MyTest{ L"Degenerate at origin", TestInput{ TextUnit_Character, -5, origin, origin }, TestOutput{ 0, origin, origin } }
+        };
+    }
 };
