@@ -305,6 +305,7 @@ commdlg
 COMMITID
 compat
 componentization
+COMPOSITIONSURFACE
 conapi
 conareainfo
 conattrs
@@ -830,6 +831,7 @@ GAUSSIAN
 gci
 gcx
 gcy
+GDC
 gdi
 gdip
 gdirenderer
@@ -1883,6 +1885,7 @@ pythonw
 qos
 QRSTU
 qsort
+Qstrip
 queryable
 QUESTIONMARK
 quickedit
@@ -1890,6 +1893,7 @@ QWER
 qzmp
 RAII
 RALT
+rapi
 rasterbar
 rasterfont
 rasterization
@@ -2167,7 +2171,6 @@ somefile
 SOURCEBRANCH
 sourced
 SOURCESDIRECTORY
-SPACEBAR
 spammy
 spand
 sprintf
@@ -2276,6 +2279,7 @@ taskbar
 tbar
 TBase
 tbc
+TBDR
 tbi
 Tbl
 TBM
@@ -2388,6 +2392,7 @@ Trd
 TREX
 triaged
 triaging
+TRIANGLELIST
 TRIANGLESTRIP
 TRIMZEROHEADINGS
 truetype
@@ -2465,11 +2470,11 @@ unittesting
 universaltest
 unk
 unknwn
+Unmap
 unmark
 UNORM
 unparseable
 unpause
-Unregister
 unregistering
 untests
 untextured
@@ -2534,6 +2539,7 @@ vec
 VERCTRL
 versioning
 VERTBAR
+VERTEXID
 VFT
 vga
 vgaoem
@@ -2541,6 +2547,7 @@ viewkind
 viewports
 Virt
 VIRTTERM
+virtualalloc
 Virtualizing
 vkey
 VKKEYSCAN

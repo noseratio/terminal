@@ -16,6 +16,12 @@ static constexpr auto maxRetriesForRenderEngine = 3;
 // The renderer will wait this number of milliseconds * how many tries have elapsed before trying again.
 static constexpr auto renderBackoffBaseTimeMilliseconds{ 150 };
 
+#define forEachEngine(var)    \
+    for (auto var : _engines) \
+        if (!var)             \
+            break;            \
+        else
+
 // Routine Description:
 // - Creates a new renderer controller for a console.
 // Arguments:
@@ -23,22 +29,17 @@ static constexpr auto renderBackoffBaseTimeMilliseconds{ 150 };
 // - pEngine - The output engine for targeting each rendering frame
 // Return Value:
 // - An instance of a Renderer.
-// NOTE: CAN THROW IF MEMORY ALLOCATION FAILS.
 Renderer::Renderer(IRenderData* pData,
                    _In_reads_(cEngines) IRenderEngine** const rgpEngines,
                    const size_t cEngines,
                    std::unique_ptr<IRenderThread> thread) :
     _pData(THROW_HR_IF_NULL(E_INVALIDARG, pData)),
     _pThread{ std::move(thread) },
-    _destructing{ false },
-    _clusterBuffer{},
     _viewport{ pData->GetViewport() }
 {
     for (size_t i = 0; i < cEngines; i++)
     {
-        IRenderEngine* engine = rgpEngines[i];
-        // NOTE: THIS CAN THROW IF MEMORY ALLOCATION FAILS.
-        AddRenderEngine(engine);
+        AddRenderEngine(rgpEngines[i]);
     }
 }
 
@@ -50,7 +51,7 @@ Renderer::Renderer(IRenderData* pData,
 // - <none>
 Renderer::~Renderer()
 {
-    _destructing = true;
+    // IRenderThread blocks until it has shut down.
     _pThread.reset();
 }
 
@@ -62,21 +63,11 @@ Renderer::~Renderer()
 // - HRESULT S_OK, GDI error, Safe Math error, or state/argument errors.
 [[nodiscard]] HRESULT Renderer::PaintFrame()
 {
-    if (_destructing)
-    {
-        return S_FALSE;
-    }
-
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         auto tries = maxRetriesForRenderEngine;
         while (tries > 0)
         {
-            if (_destructing)
-            {
-                return S_FALSE;
-            }
-
             const auto hr = _PaintFrameForEngine(pEngine);
             if (E_PENDING == hr)
             {
@@ -202,9 +193,10 @@ void Renderer::_NotifyPaintFrame()
 // - <none>
 void Renderer::TriggerSystemRedraw(const RECT* const prcDirtyClient)
 {
-    std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+    forEachEngine(pEngine)
+    {
         LOG_IF_FAILED(pEngine->InvalidateSystem(prcDirtyClient));
-    });
+    }
 
     _NotifyPaintFrame();
 }
@@ -235,9 +227,10 @@ void Renderer::TriggerRedraw(const Viewport& region)
     if (view.TrimToViewport(&srUpdateRegion))
     {
         view.ConvertToOrigin(&srUpdateRegion);
-        std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+        forEachEngine(pEngine)
+        {
             LOG_IF_FAILED(pEngine->Invalidate(&srUpdateRegion));
-        });
+        }
 
         _NotifyPaintFrame();
     }
@@ -286,7 +279,7 @@ void Renderer::TriggerRedrawCursor(const COORD* const pcoord)
         if (cursorView.IsValid())
         {
             const SMALL_RECT updateRect = view.ConvertToOrigin(cursorView).ToExclusive();
-            for (IRenderEngine* pEngine : _rgpEngines)
+            forEachEngine(pEngine)
             {
                 LOG_IF_FAILED(pEngine->InvalidateCursor(&updateRect));
             }
@@ -305,9 +298,10 @@ void Renderer::TriggerRedrawCursor(const COORD* const pcoord)
 // - <none>
 void Renderer::TriggerRedrawAll()
 {
-    std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+    forEachEngine(pEngine)
+    {
         LOG_IF_FAILED(pEngine->InvalidateAll());
-    });
+    }
 
     _NotifyPaintFrame();
 }
@@ -325,7 +319,7 @@ void Renderer::TriggerTeardown() noexcept
     _pThread->WaitForPaintCompletionAndDisable(INFINITE);
 
     // Then walk through and do one final paint on the caller's thread.
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         bool fEngineRequestsRepaint = false;
         HRESULT hr = pEngine->PrepareForTeardown(&fEngineRequestsRepaint);
@@ -367,10 +361,11 @@ void Renderer::TriggerSelection()
             sr = Viewport::FromInclusive(rc).ToExclusive();
         }
 
-        std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+        forEachEngine(pEngine)
+        {
             LOG_IF_FAILED(pEngine->InvalidateSelection(_previousSelection));
             LOG_IF_FAILED(pEngine->InvalidateSelection(rects));
-        });
+        }
 
         _previousSelection = rects;
 
@@ -390,36 +385,26 @@ bool Renderer::_CheckViewportAndScroll()
     SMALL_RECT const srOldViewport = _viewport.ToInclusive();
     SMALL_RECT const srNewViewport = _pData->GetViewport().ToInclusive();
 
+    if (srOldViewport == srNewViewport)
+    {
+        return false;
+    }
+
+    _viewport = Viewport::FromInclusive(srNewViewport);
+    _clusterBuffer.reserve(til::rectangle{ srNewViewport }.width());
+
     COORD coordDelta;
     coordDelta.X = srOldViewport.Left - srNewViewport.Left;
     coordDelta.Y = srOldViewport.Top - srNewViewport.Top;
 
-    for (auto engine : _rgpEngines)
+    forEachEngine(engine)
     {
         LOG_IF_FAILED(engine->UpdateViewport(srNewViewport));
+        LOG_IF_FAILED(engine->InvalidateScroll(&coordDelta));
     }
 
-    _viewport = Viewport::FromInclusive(srNewViewport);
-
-    // If we're keeping some buffers between calls, let them know about the viewport size
-    // so they can prepare the buffers for changes to either preallocate memory at once
-    // (instead of growing naturally) or shrink down to reduce usage as appropriate.
-    const size_t lineLength = gsl::narrow_cast<size_t>(til::rectangle{ srNewViewport }.width());
-    til::manage_vector(_clusterBuffer, lineLength, _shrinkThreshold);
-
-    if (coordDelta.X != 0 || coordDelta.Y != 0)
-    {
-        for (auto engine : _rgpEngines)
-        {
-            LOG_IF_FAILED(engine->InvalidateScroll(&coordDelta));
-        }
-
-        _ScrollPreviousSelection(coordDelta);
-
-        return true;
-    }
-
-    return false;
+    _ScrollPreviousSelection(coordDelta);
+    return true;
 }
 
 // Routine Description:
@@ -448,9 +433,10 @@ void Renderer::TriggerScroll()
 // - <none>
 void Renderer::TriggerScroll(const COORD* const pcoordDelta)
 {
-    std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+    forEachEngine(pEngine)
+    {
         LOG_IF_FAILED(pEngine->InvalidateScroll(pcoordDelta));
-    });
+    }
 
     _ScrollPreviousSelection(*pcoordDelta);
 
@@ -466,7 +452,7 @@ void Renderer::TriggerScroll(const COORD* const pcoordDelta)
 // - <none>
 void Renderer::TriggerCircling()
 {
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         bool fEngineRequestsRepaint = false;
         HRESULT hr = pEngine->InvalidateCircling(&fEngineRequestsRepaint);
@@ -488,10 +474,9 @@ void Renderer::TriggerCircling()
 // - <none>
 void Renderer::TriggerTitleChange()
 {
-    const auto newTitle = _pData->GetConsoleTitle();
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
-        LOG_IF_FAILED(pEngine->InvalidateTitle(newTitle));
+        LOG_IF_FAILED(pEngine->InvalidateTitle());
     }
     _NotifyPaintFrame();
 }
@@ -518,10 +503,11 @@ HRESULT Renderer::_PaintTitle(IRenderEngine* const pEngine)
 // - <none>
 void Renderer::TriggerFontChange(const int iDpi, const FontInfoDesired& FontInfoDesired, _Out_ FontInfo& FontInfo)
 {
-    std::for_each(_rgpEngines.begin(), _rgpEngines.end(), [&](IRenderEngine* const pEngine) {
+    forEachEngine(pEngine)
+    {
         LOG_IF_FAILED(pEngine->UpdateDpi(iDpi));
         LOG_IF_FAILED(pEngine->UpdateFont(FontInfoDesired, FontInfo));
-    });
+    }
 
     _NotifyPaintFrame();
 }
@@ -537,21 +523,11 @@ void Renderer::TriggerFontChange(const int iDpi, const FontInfoDesired& FontInfo
 // - S_OK if set successfully or relevant GDI error via HRESULT.
 [[nodiscard]] HRESULT Renderer::GetProposedFont(const int iDpi, const FontInfoDesired& FontInfoDesired, _Out_ FontInfo& FontInfo)
 {
-    // If there's no head, return E_FAIL. The caller should decide how to
-    //      handle this.
-    // Currently, the only caller is the WindowProc:WM_GETDPISCALEDSIZE handler.
-    //      It will assume that the proposed font is 1x1, regardless of DPI.
-    if (_rgpEngines.size() < 1)
-    {
-        return E_FAIL;
-    }
-
     // There will only every really be two engines - the real head and the VT
     //      renderer. We won't know which is which, so iterate over them.
     //      Only return the result of the successful one if it's not S_FALSE (which is the VT renderer)
     // TODO: 14560740 - The Window might be able to get at this info in a more sane manner
-    FAIL_FAST_IF(!(_rgpEngines.size() <= 2));
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         const HRESULT hr = LOG_IF_FAILED(pEngine->GetProposedFont(FontInfoDesired, FontInfo, iDpi));
         // We're looking for specifically S_OK, S_FALSE is not good enough.
@@ -559,7 +535,7 @@ void Renderer::TriggerFontChange(const int iDpi, const FontInfoDesired& FontInfo
         {
             return hr;
         }
-    };
+    }
 
     return E_FAIL;
 }
@@ -574,7 +550,7 @@ void Renderer::TriggerFontChange(const int iDpi, const FontInfoDesired& FontInfo
 // - glyph - the utf16 encoded codepoint to test
 // Return Value:
 // - True if the codepoint is full-width (two wide), false if it is half-width (one wide).
-bool Renderer::IsGlyphWideByFont(const std::wstring_view glyph)
+bool Renderer::IsGlyphWideByFont(const std::wstring_view& glyph)
 {
     bool fIsFullWidth = false;
 
@@ -582,14 +558,13 @@ bool Renderer::IsGlyphWideByFont(const std::wstring_view glyph)
     //      renderer. We won't know which is which, so iterate over them.
     //      Only return the result of the successful one if it's not S_FALSE (which is the VT renderer)
     // TODO: 14560740 - The Window might be able to get at this info in a more sane manner
-    FAIL_FAST_IF(!(_rgpEngines.size() <= 2));
-    for (IRenderEngine* const pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         const HRESULT hr = LOG_IF_FAILED(pEngine->IsGlyphWideByFont(glyph, &fIsFullWidth));
         // We're looking for specifically S_OK, S_FALSE is not good enough.
         if (hr == S_OK)
         {
-            return fIsFullWidth;
+            break;
         }
     }
 
@@ -801,7 +776,7 @@ void Renderer::_PaintBufferOutputHelper(_In_ IRenderEngine* const pEngine,
 
                 // Walk through the text data and turn it into rendering clusters.
                 // Keep the columnCount as we go to improve performance over digging it out of the vector at the end.
-                size_t columnCount = 0;
+                size_t columnCount = it->Columns();
 
                 // If we're on the first cluster to be added and it's marked as "trailing"
                 // (a.k.a. the right half of a two column character), then we need some special handling.
@@ -812,14 +787,7 @@ void Renderer::_PaintBufferOutputHelper(_In_ IRenderEngine* const pEngine,
                     // And tell the next function to trim off the left half of it.
                     trimLeft = true;
                     // And add one to the number of columns we expect it to take as we insert it.
-                    columnCount = it->Columns() + 1;
-                    _clusterBuffer.emplace_back(it->Chars(), columnCount);
-                }
-                // Otherwise if it's not a special case, just insert it as is.
-                else
-                {
-                    columnCount = it->Columns();
-                    _clusterBuffer.emplace_back(it->Chars(), columnCount);
+                    ++columnCount;
                 }
 
                 if (columnCount > 1)
@@ -828,6 +796,7 @@ void Renderer::_PaintBufferOutputHelper(_In_ IRenderEngine* const pEngine,
                 }
 
                 // Advance the cluster and column counts.
+                _clusterBuffer.emplace_back(it->Chars(), columnCount);
                 it += std::max<size_t>(it->Columns(), 1); // prevent infinite loop for no visible columns
                 cols += columnCount;
 
@@ -1280,7 +1249,17 @@ void Renderer::_ScrollPreviousSelection(const til::point delta)
 void Renderer::AddRenderEngine(_In_ IRenderEngine* const pEngine)
 {
     THROW_HR_IF_NULL(E_INVALIDARG, pEngine);
-    _rgpEngines.push_back(pEngine);
+
+    for (auto& p : _engines)
+    {
+        if (!p)
+        {
+            p = pEngine;
+            return;
+        }
+    }
+
+    FAIL_FAST_MSG("engines array is full");
 }
 
 // Method Description:
@@ -1312,7 +1291,7 @@ void Renderer::UpdateLastHoveredInterval(const std::optional<PointTree::interval
 // - Blocks until the engines are able to render without blocking.
 void Renderer::WaitUntilCanRender()
 {
-    for (const auto pEngine : _rgpEngines)
+    forEachEngine(pEngine)
     {
         pEngine->WaitUntilCanRender();
     }

@@ -30,6 +30,7 @@
 #include "../../renderer/gdi/gdirenderer.hpp"
 
 #if TIL_FEATURE_CONHOSTDXENGINE_ENABLED
+#include "../../renderer/atlas/AtlasEngine.h"
 #include "../../renderer/dx/DxRenderer.hpp"
 #endif
 
@@ -212,13 +213,15 @@ void Window::_UpdateSystemMetrics() const
     const bool useDx = pSettings->GetUseDx();
     GdiEngine* pGdiEngine = nullptr;
 #if TIL_FEATURE_CONHOSTDXENGINE_ENABLED
-    [[maybe_unused]] DxEngine* pDxEngine = nullptr;
+    //AtlasEngine* pDxEngine = nullptr;
+    DxEngine* pDxEngine = nullptr;
 #endif
     try
     {
 #if TIL_FEATURE_CONHOSTDXENGINE_ENABLED
         if (useDx)
         {
+            //pDxEngine = new AtlasEngine();
             pDxEngine = new DxEngine();
             // TODO: MSFT:21255595 make this less gross
             // Manually set the Dx Engine to Hwnd mode. When we're trying to
