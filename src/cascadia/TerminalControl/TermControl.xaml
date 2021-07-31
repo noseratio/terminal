@@ -73,6 +73,28 @@
                             </ToolTipService.ToolTip>
                         </Border>
                     </Canvas>
+
+                    <Canvas x:Name="SelectionCanvas"
+                            Visibility="Visible">
+                        <FontIcon x:Name="SelectionStartIcon"
+                                  Visibility="Collapsed"
+                                  FontFamily="Segoe MDL2 Assets"
+                                  Glyph="&#xE893;">
+                            <!--TODO CARLOS: this is a HACK to get the scaling to look neat-->
+                            <FontIcon.RenderTransform>
+                                <ScaleTransform ScaleX=".5"/>
+                            </FontIcon.RenderTransform>
+                        </FontIcon>
+                        <FontIcon x:Name="SelectionEndIcon"
+                                  Visibility="Collapsed"
+                                  FontFamily="Segoe MDL2 Assets"
+                                  Glyph="&#xE892;">
+                            <!--TODO CARLOS: this is a HACK to get the scaling to look neat-->
+                            <FontIcon.RenderTransform>
+                                <ScaleTransform ScaleX=".5"/>
+                            </FontIcon.RenderTransform>
+                        </FontIcon>
+                    </Canvas>
                 </SwapChainPanel>
 
                 <!--

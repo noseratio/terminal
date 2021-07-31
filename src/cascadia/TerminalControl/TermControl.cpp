@@ -86,6 +86,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         _core.TransparencyChanged({ this, &TermControl::_coreTransparencyChanged });
         _core.RaiseNotice({ this, &TermControl::_coreRaisedNotice });
         _core.HoveredHyperlinkChanged({ this, &TermControl::_hoveredHyperlinkChanged });
+        _core.SelectionChanged({ this, &TermControl::_selectionChanged });
         _interactivity.OpenHyperlink({ this, &TermControl::_HyperlinkHandler });
         _interactivity.ScrollPositionChanged({ this, &TermControl::_ScrollPositionChanged });
 
@@ -2446,8 +2447,8 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         _core.ClearHoveredCell();
     }
 
-    winrt::fire_and_forget TermControl::_hoveredHyperlinkChanged(IInspectable sender,
-                                                                 IInspectable args)
+    winrt::fire_and_forget TermControl::_hoveredHyperlinkChanged(IInspectable /*sender*/,
+                                                                 IInspectable /*args*/)
     {
         auto weakThis{ get_weak() };
         co_await resume_foreground(Dispatcher());
@@ -2487,10 +2488,75 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         }
     }
 
+    winrt::fire_and_forget TermControl::_selectionChanged(IInspectable /*sender*/, IInspectable /*args*/)
+    {
+        auto weakThis{ get_weak() };
+        co_await resume_foreground(Dispatcher());
+        if (auto self{ weakThis.get() }; self)
+        {
+            if (_core.HasSelection())
+            {
+                // show/update selection markers
+                // figure out which endpoint to move, get it and the relevant icon (hide the other icon)
+                const auto movingStart{ _core.MovingStart() };
+                const auto selectionAnchor{ movingStart ? _core.SelectionAnchor() : _core.SelectionEnd() };
+                const auto& icon{ movingStart ? SelectionStartIcon() : SelectionEndIcon() };
+                const auto& otherIcon{ movingStart ? SelectionEndIcon() : SelectionStartIcon() };
+                icon.Visibility(Visibility::Visible);
+                otherIcon.Visibility(Visibility::Collapsed);
+
+                // Compute the location of the top left corner of the cell in DIPS
+                // TODO CARLOS: 100% copied from _hoveredHyperlinkChanged
+                const til::size marginsInDips{ til::math::rounding, GetPadding().Left, GetPadding().Top };
+                const til::point startPos{ selectionAnchor };
+                const til::size fontSize{ til::math::rounding, _core.FontSize() };
+                const til::point posInPixels{ startPos * fontSize };
+                const til::point posInDIPs{ posInPixels / SwapChainPanel().CompositionScaleX() };
+                const til::point locationInDIPs{ posInDIPs + marginsInDips };
+
+                // Move the icon to the top left corner of the cell
+                SelectionCanvas().SetLeft(icon,
+                                          (locationInDIPs.x() - SwapChainPanel().ActualOffset().x));
+                SelectionCanvas().SetTop(icon,
+                                         (locationInDIPs.y() - SwapChainPanel().ActualOffset().y));
+            }
+            else
+            {
+                // hide selection markers
+                SelectionStartIcon().Visibility(Visibility::Collapsed);
+                SelectionEndIcon().Visibility(Visibility::Collapsed);
+            }
+        }
+    }
+
     void TermControl::_coreFontSizeChanged(const int fontWidth,
                                            const int fontHeight,
                                            const bool isInitialChange)
     {
+        // TODO CARLOS: having trouble scaling this properly :(
+        // scale the selection markers to be the size of a cell
+        //auto scaleIconMarker = [fontWidth, fontHeight](Windows::UI::Xaml::Controls::FontIcon icon) {
+        //    // IMPORTANT: we need the icon to be visible to get its size.
+        //    // So let's make it transparent, then "visible" to do this.
+        //    Media::SolidColorBrush transparentBrush{ Windows::UI::Colors::Transparent() };
+        //    icon.Foreground(transparentBrush);
+        //    icon.Visibility(Visibility::Visible);
+        //
+        //    const auto size{ icon.DesiredSize() };
+        //    const auto scaleX = fontWidth / size.Width;
+        //    const auto scaleY = fontHeight / size.Height;
+        //
+        //    Windows::UI::Xaml::Media::ScaleTransform transform{};
+        //    transform.ScaleX(transform.ScaleX() * scaleX);
+        //    transform.ScaleY(transform.ScaleY() * scaleY);
+        //    icon.RenderTransform(transform);
+        //
+        //    // now hide the icon
+        //    icon.Visibility(Visibility::Collapsed);
+        //};
+        //scaleIconMarker(SelectionStartIcon());
+        //scaleIconMarker(SelectionEndIcon());
+
         // Don't try to inspect the core here. The Core is raising this while
         // it's holding its write lock. If the handlers calls back to some
         // method on the TermControl on the same thread, and that _method_ calls

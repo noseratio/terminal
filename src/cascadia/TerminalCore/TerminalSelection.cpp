@@ -85,6 +85,20 @@ const COORD Terminal::GetSelectionEnd() const noexcept
     return _selection->end;
 }
 
+til::point Terminal::SelectionStartForRendering() const
+{
+    auto pos{ _selection->start };
+    _buffer->GetSize().DecrementInBounds(pos);
+    return pos;
+}
+
+til::point Terminal::SelectionEndForRendering() const
+{
+    auto pos{ _selection->end };
+    _buffer->GetSize().IncrementInBounds(pos);
+    return pos;
+}
+
 // Method Description:
 // - Checks if selection is active
 // Return Value:

@@ -259,6 +259,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         void _FontInfoHandler(const IInspectable& sender, const FontInfoEventArgs& eventArgs);
 
         winrt::fire_and_forget _hoveredHyperlinkChanged(IInspectable sender, IInspectable args);
+        winrt::fire_and_forget _selectionChanged(IInspectable sender, IInspectable args);
 
         void _coreFontSizeChanged(const int fontWidth,
                                   const int fontHeight,
